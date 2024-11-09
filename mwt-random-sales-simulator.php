@@ -34,8 +34,9 @@ class WC_Random_Sales_Simulator {
 
 		add_action( 'admin_enqueue_scripts', array( $this, 'simulator_enqueue_admin_scripts' ) );
 
-		add_action( 'wp_ajax_install_demo_customers', array( $this, 'simulator_install_demo_customers' ) );
-		add_action( 'wp_ajax_install_sample_products', array( $this, 'simulator_install_sample_products' ) );
+		add_action( 'wp_ajax_simulator_assign_random_rankings', array( $this, 'simulator_assign_random_rankings' ) );
+		add_action( 'wp_ajax_simulator_install_demo_customers', array( $this, 'simulator_install_demo_customers' ) );
+		add_action( 'wp_ajax_simulator_install_sample_products', array( $this, 'simulator_install_sample_products' ) );
 	}
 	/**
 	 * Checks the status of the cron job and schedules/unschedules it as needed.
@@ -58,6 +59,70 @@ class WC_Random_Sales_Simulator {
 		}
 	}
 	/**
+	 * Handles the AJAX request to assign random rankings to 20 WooCommerce products.
+	 *
+	 * This function takes no parameters. It queries 20 random WooCommerce products,
+	 * and assigns a random ranking between 1 and 5 to each product. The rankings
+	 * are stored as a meta field for each product. The function returns a JSON
+	 * success response or error message.
+	 *
+	 * @since 1.0.0
+	 */
+	public function simulator_assign_random_rankings() {
+		check_ajax_referer( 'simulator_nonce', 'nonce' );
+
+		// Query to get 20 random WooCommerce products.
+		$args = array(
+			'post_type'      => 'product',
+			'posts_per_page' => 20,
+			'orderby'        => 'rand',
+			'fields'         => 'ids',
+		);
+
+		$query = new WP_Query( $args );
+
+		if ( $query->have_posts() ) {
+			$total_rankings    = 40;
+			$products          = $query->posts;
+			$rankings_assigned = 0;
+
+			// Initialize an array to track how many rankings each product has.
+			$product_rankings = array_fill_keys( $products, 0 );
+
+			while ( $rankings_assigned < $total_rankings ) {
+				$product_id = $products[ array_rand( $products ) ];
+
+				// Generate a random ranking between 1 and 5.
+				$random_ranking = wp_rand( 1, 5 );
+
+				// Check if the current product has fewer than 5 rankings assigned.
+				if ( $product_rankings[ $product_id ] < 5 ) {
+					++$product_rankings[ $product_id ];
+
+					// Get current rankings and add the new ranking.
+					$current_rankings   = get_post_meta( $product_id, '_product_rankings', true );
+					$current_rankings   = is_array( $current_rankings ) ? $current_rankings : array();
+					$current_rankings[] = $random_ranking;
+
+					// Update the product's rankings meta.
+					update_post_meta( $product_id, '_product_rankings', $current_rankings );
+
+					// Calculate and update the average rating.
+					$average_rating = array_sum( $current_rankings ) / count( $current_rankings );
+					update_post_meta( $product_id, '_wc_average_rating', $average_rating );
+
+					++$rankings_assigned;
+				}
+			}
+
+			wp_send_json_success( 'Random rankings assigned to 20 products successfully!' );
+		} else {
+			wp_send_json_error( 'No products found to assign rankings.' );
+		}
+	}
+
+
+	/**
 	 * Handles the AJAX request to install demo customers.
 	 *
 	 * This function checks the AJAX request for a valid nonce, processes the
@@ -67,7 +132,7 @@ class WC_Random_Sales_Simulator {
 	 * @since 1.0.0
 	 */
 	public function simulator_install_demo_customers() {
-		check_ajax_referer( 'simulator_nonce' );
+		check_ajax_referer( 'simulator_nonce', 'nonce' );
 
 		$names = array(
 			array( 'first_name' => 'John', 'last_name' => 'Doe' ),
@@ -114,7 +179,7 @@ class WC_Random_Sales_Simulator {
 	 * @since 1.0.0
 	 */
 	public function simulator_install_sample_products() {
-		check_ajax_referer( 'simulator_nonce' );
+		check_ajax_referer( 'simulator_nonce', 'nonce' );
 
 		// Logic to read sample.xls and install products
 		wp_send_json_success( 'Sample products installed successfully!' );
@@ -129,7 +194,7 @@ class WC_Random_Sales_Simulator {
 	 * nonce value.
 	 */
 	public function simulator_enqueue_admin_scripts() {
-		wp_enqueue_script( 'simulator-ajax', plugins_url( '/js/simulator-ajax.js', __FILE__ ), array( 'jquery' ), null, true );
+		wp_enqueue_script( 'simulator-ajax', plugins_url( '/simulator-ajax.js', __FILE__ ), array( 'jquery' ), null, true );
 		wp_localize_script(
 			'simulator-ajax',
 			'simulator_ajax_obj',
@@ -221,6 +286,14 @@ class WC_Random_Sales_Simulator {
 			'wc-simulator-settings',
 			'simulator_main_settings'
 		);
+
+		add_settings_field(
+			'simulate_demo_rankings',
+			'Install Demo Rankings',
+			array( $this, 'simulator_install_demo_rankings_callback' ),
+			'wc-simulator-settings',
+			'simulator_main_settings'
+		);
 	}
 	/**
 	 * Displays a checkbox for toggling the cron job for generating random sales.
@@ -250,13 +323,7 @@ class WC_Random_Sales_Simulator {
 	 */
 	public function simulator_install_demo_customers_callback() {
 		?>
-		<button type="button" onclick="installDemoCustomers()">Install Demo Customers</button>
-		<script>
-			function installDemoCustomers() {
-				// AJAX call to handle demo customer installation
-				alert('Demo customers installation triggered!');
-			}
-		</script>
+		<button type="button" id="installDemoCustomers">Install Demo Customers</button>
 		<?php
 	}
 
@@ -271,13 +338,22 @@ class WC_Random_Sales_Simulator {
 	 */
 	public function simulator_install_sample_products_callback() {
 		?>
-		<button type="button" onclick="installSampleProducts()">Install Sample Products</button>
-		<script>
-			function installSampleProducts() {
-				// AJAX call to handle sample product installation
-				alert('Sample products installation triggered!');
-			}
-		</script>
+		<button type="button" id="installSampleProducts">Install Sample Products</button>
+		<?php
+	}
+	/**
+	 * Displays a button to assign random rankings to 20 products.
+	 *
+	 * Outputs a button that, when clicked, triggers a JavaScript function
+	 * to initiate an AJAX call for assigning random rankings to 20 products.
+	 * An alert notifies the user that the assignment of random rankings has
+	 * been triggered.
+	 *
+	 * @since 1.0.0
+	 */
+	public function simulator_install_demo_rankings_callback() {
+		?>
+		<button type="button" id="installDemoRankings">Install Demo Rankings</button>
 		<?php
 	}
 	/**
