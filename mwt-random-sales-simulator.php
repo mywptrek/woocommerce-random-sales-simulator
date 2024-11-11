@@ -214,14 +214,13 @@ class WC_Random_Sales_Simulator {
 	 * is called to render the content of the page.
 	 */
 	public function simulator_woocommerce_add_admin_page() {
-		add_menu_page(
+		add_submenu_page(
+			'tools.php',
 			'WooCommerce Simulator Settings',
 			'WC Simulator Settings',
 			'manage_options',
 			'wc-simulator-settings',
 			array( $this, 'simulator_woocommerce_settings_page' ),
-			'dashicons-admin-settings',
-			56
 		);
 	}
 	/**
